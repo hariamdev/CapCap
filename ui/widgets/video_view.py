@@ -7,7 +7,13 @@ from .subtitle_overlay import SubtitleOverlayItem
 
 
 class VideoView(QGraphicsView):
-    """Hosts video and subtitle overlay in one scene."""
+    """Hosts video and subtitle overlay in one scene.
+
+    This is the Qt Multimedia fallback used when the bundled libmpv runtime is
+    unavailable.  It intentionally exposes the small compatibility surface
+    expected by the main editor so optional MPV-only overlay tools cannot make
+    the whole editor fail during startup.
+    """
 
     framingChanged = Signal(float, float)
 
@@ -37,6 +43,13 @@ class VideoView(QGraphicsView):
         self._framing_drag_active = False
         self._framing_drag_start = QPointF()
         self._framing_drag_focus = (0.5, 0.5)
+
+        # MPV owns the interactive Blur/Mask/Logo overlay implementation.
+        # Keep a tiny fallback state so calls from shared editor code are safe
+        # when source users do not have bin/mpv/libmpv-2.dll installed.
+        self._blur_edit_enabled = False
+        self._blur_regions = []
+        self._blur_active_index = -1
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -86,6 +99,33 @@ class VideoView(QGraphicsView):
 
     def get_preview_fill_focus(self) -> tuple[float, float]:
         return (float(self.preview_fill_focus_x), float(self.preview_fill_focus_y))
+
+    # ------------------------------------------------------------------
+    # Optional MPV overlay compatibility
+    # ------------------------------------------------------------------
+    def set_blur_edit_enabled(self, enabled: bool):
+        """Accept shared Blur-editor state when running on the Qt fallback.
+
+        Qt's QGraphicsVideoItem fallback cannot provide the native MPV blur
+        editor/filter overlay.  Keeping this method as a safe compatibility
+        endpoint prevents editor startup from crashing; actual blur rendering
+        is still handled by the export pipeline (or by MPV when available).
+        """
+        self._blur_edit_enabled = bool(enabled)
+
+    def set_blur_regions_normalized(self, regions):
+        self._blur_regions = [dict(region) for region in (regions or []) if isinstance(region, dict)]
+
+    def set_blur_active_index(self, index: int):
+        try:
+            self._blur_active_index = int(index)
+        except (TypeError, ValueError):
+            self._blur_active_index = -1
+
+    def clear_blur_region(self):
+        self._blur_regions = []
+        self._blur_active_index = -1
+        self._blur_edit_enabled = False
 
     def _resolve_canvas_aspect_ratio(self) -> float | None:
         aspect_key = str(getattr(self, "preview_aspect_key", "source") or "source").strip().lower()
