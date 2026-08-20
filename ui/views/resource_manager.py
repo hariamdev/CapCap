@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from runtime_paths import workspace_root as default_workspace_root
+from runtime_paths import models_path, workspace_root as default_workspace_root
 from services import ResourceDownloadService
 
 
@@ -122,6 +122,39 @@ def open_resource_manager(workspace_root: str = None, parent=None,
     scroll.setWidget(content)
 
     dialog._resource_rows = {}
+
+    def _sensevoice_resource_item() -> dict:
+        """Expose the SenseVoice files that CPU/GPU mode already requires."""
+        target_dir = models_path("sensevoice")
+        model_path = os.path.join(target_dir, "model.int8.onnx")
+        tokens_path = os.path.join(target_dir, "tokens.txt")
+        model_ready = os.path.isfile(model_path)
+        tokens_ready = os.path.isfile(tokens_path)
+
+        if model_ready and tokens_ready:
+            status = "installed"
+        elif model_ready or tokens_ready:
+            status = "partial"
+        else:
+            status = "missing"
+
+        repo_id = str(getattr(service, "SENSEVOICE_REPO", "") or "").strip()
+        download_url = f"https://huggingface.co/{repo_id}/tree/main" if repo_id else ""
+        return {
+            "id": "sensevoice:model",
+            "name": "SenseVoice (Sherpa-ONNX)",
+            "kind": "sensevoice",
+            "required_for": "CPU/GPU Mode",
+            "status": status,
+            "target_dir": target_dir,
+            "download_url": download_url,
+            "expected_filename": "model.int8.onnx + tokens.txt",
+            "auto_download_supported": False,
+            "description": (
+                "Local transcription model required by CapCap. Download model.int8.onnx "
+                "and tokens.txt from the model page and place both files in this folder."
+            ),
+        }
 
     def _show_status_pill(row, status_key: str, status_label: str = ""):
         new_pill = _status_pill_widget(status_key, dialog, status_label)
@@ -262,8 +295,17 @@ def open_resource_manager(workspace_root: str = None, parent=None,
         wrapper_layout.addWidget(inner)
         return wrapper, inner_layout
 
+    def _resources_with_sensevoice() -> list[dict]:
+        resources = list(service.list_resources())
+        if not any(item.get("id") == "sensevoice:model" for item in resources):
+            resources.insert(0, _sensevoice_resource_item())
+        return resources
+
     def _refresh():
-        resources = {item["id"]: item for item in service.list_resources()}
+        resources = {item["id"]: item for item in _resources_with_sensevoice()}
+        # Rebuild the synthetic item so Partial/Ready updates immediately after
+        # users copy model.int8.onnx and tokens.txt then click Refresh.
+        resources["sensevoice:model"] = _sensevoice_resource_item()
         for resource_id, row in dialog._resource_rows.items():
             item = resources.get(resource_id, row.get("item", {}))
             row["item"] = item
@@ -278,7 +320,7 @@ def open_resource_manager(workspace_root: str = None, parent=None,
                 widget.deleteLater()
         dialog._resource_rows = {}
 
-        resources = service.list_resources()
+        resources = _resources_with_sensevoice()
         cpu_items = [r for r in resources if r.get("kind") in {"sensevoice", "whisper_cpu"}]
         gpu_kinds = {"ai", "whisper", "cuda"}
         gpu_items = [r for r in resources if r.get("kind") in gpu_kinds]
