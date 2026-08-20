@@ -28,6 +28,10 @@ class SubtitleOverlayItem(QGraphicsItem):
         self.custom_position_enabled = False
         self.custom_x_percent = 50
         self.custom_y_percent = 86
+        # When MPV/libass renders the live subtitle, keep this graphics item
+        # available for layout/dragging but suppress its own text painting so
+        # the subtitle is not rendered twice.
+        self._text_rendering_enabled = True
 
     def set_text(self, text):
         new_lines = [line for line in str(text or "").splitlines() if line] or ([] if not text else [str(text)])
@@ -47,6 +51,17 @@ class SubtitleOverlayItem(QGraphicsItem):
             self.current_lines = cleaned
             self.current_text = joined
             self._update_height()
+            self.update()
+
+    def set_text_rendering(self, enabled: bool):
+        """Enable/disable Qt subtitle painting without hiding the overlay item.
+
+        MPV/libass live preview uses this to avoid drawing duplicate subtitle
+        text while preserving the graphics item for positioning and editing.
+        """
+        enabled = bool(enabled)
+        if enabled != self._text_rendering_enabled:
+            self._text_rendering_enabled = enabled
             self.update()
 
     def _update_height(self):
@@ -126,6 +141,8 @@ class SubtitleOverlayItem(QGraphicsItem):
         return QRectF(0, 0, self.W, self.H)
 
     def paint(self, painter, option, widget):
+        if not self._text_rendering_enabled:
+            return
         if not self.current_text and not self.current_lines and not self.isVisible():
             return
         painter.setRenderHint(QPainter.Antialiasing)
