@@ -114,7 +114,16 @@ class QtMediaPlayerBackend(QObject):
             self._player.setVideoOutput(video_view.video_item)
         self._player.positionChanged.connect(self.positionChanged.emit)
         self._player.durationChanged.connect(self.durationChanged.emit)
-        self._player.stateChanged.connect(lambda s: self.stateChanged.emit(int(s.value)))
+        # Qt 6 exposes playback state changes as ``playbackStateChanged``.
+        # Keep the legacy name as a fallback for older bindings so selecting a
+        # video still works when libmpv is unavailable and CapCap uses Qt's
+        # multimedia backend instead.
+        playback_state_signal = getattr(self._player, "playbackStateChanged", None)
+        if playback_state_signal is None:
+            playback_state_signal = getattr(self._player, "stateChanged")
+        playback_state_signal.connect(
+            lambda state: self.stateChanged.emit(int(state.value))
+        )
         # When the clip reaches the end, the QMediaPlayer goes to
         # StoppedState — surface this so the timeline can stop too
         # (Bug 2: video not pausing at end, timeline keeps running).
